@@ -11,7 +11,9 @@ from app.config.settings import VECTOR_DB_URL
 from app.services.rag_processor import rag_processor
 
 # Configure logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
+
 
 router = APIRouter()
 
@@ -77,17 +79,14 @@ def convert_filter_to_query_params(filter_expression: Optional[FilterExpression]
     op = operator_map.get(filter_expression.operator, "=")
     return f"{filter_expression.field}{op}{filter_expression.value}"
 
+async def get_documents_from_api(collection_name: str) -> List[Document]:
+    """Fetch all documents from the vector database API."""
+    base_url = f"{VECTOR_DB_URL}/api/v1/collections/{collection_name}/payloads"
 
-async def get_documents_from_api(collection_name: str, filter_expression: Optional[FilterExpression]) -> List[Document]:
-    """Fetch documents from the vector database API."""
-    query_params = convert_filter_to_query_params(filter_expression)
-    base_url = f"{VECTOR_DB_URL}/api/v1/collections/{collection_name}/payload"
-
-    url = f"{base_url}?{query_params}" if query_params else base_url
-    logger.info(f"Fetching documents from URL: {url}")
+    print ("base_url", base_url)
 
     async with aiohttp.ClientSession() as session:
-        async with session.get(url) as response:
+        async with session.get(base_url) as response:
             if response.status != 200:
                 raise HTTPException(
                     status_code=response.status,
@@ -103,13 +102,14 @@ async def similarity_search(request: SearchRequest, collection_name: str = "vect
     """
     Perform similarity search on documents using cosine similarity.
     """
+    logger.info(f"Performing similarity search for query: {request.query}")
     try:
         # Get query embeddings
         query_embedding = await rag_processor.get_embeddings(request.query)
         logger.info(f"Generated query embedding for: {request.query}")
 
         # Fetch documents from API
-        documents = await get_documents_from_api(collection_name, request.filterExpression)
+        documents = await get_documents_from_api(collection_name)
         logger.info(f"Retrieved {len(documents)} documents from API")
 
         # Create document map for quick lookup
