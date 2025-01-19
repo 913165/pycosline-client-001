@@ -57,7 +57,7 @@ async def process_file_to_vectors(
     if not file.filename.endswith(('.txt', '.csv', '.pdf')):
         raise HTTPException(
             status_code=400,
-            detail="Only .txt and .csv files are currently supported"
+            detail="Only .txt,pdf and .csv  files are currently supported"
         )
 
     try:
