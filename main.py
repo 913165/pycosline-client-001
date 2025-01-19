@@ -10,7 +10,6 @@ import aiohttp
 from io import StringIO
 import csv
 
-
 # LangChain imports
 from langchain_community.document_loaders import TextLoader
 from langchain_mistralai.chat_models import ChatMistralAI
@@ -59,7 +58,7 @@ class EmbeddingRequest(BaseModel):
 
 
 class EmbeddingResponse(BaseModel):
-    id: UUID  # Add UUID field
+    id: UUID
     text: str
     embedding: List[float]
     metadata: Optional[Dict[str, Any]] = None
@@ -76,9 +75,10 @@ class BatchEmbeddingResponse(BaseModel):
 
 class Point(BaseModel):
     id: UUID
+    metadata: Dict[str, Any] = {}
     content: str
+    media: List[str] = []
     embedding: List[float]
-    metadata: Optional[Dict[str, Any]] = None
 
     class Config:
         from_attributes = True
@@ -147,7 +147,10 @@ class RAGProcessor:
             response = retrieval_chain.invoke({"input": question})
             return response["answer"]
         except Exception as e:
-            raise HTTPException(status_code=500, detail=str(e))
+            raise HTTPException(
+                status_code=500,
+                detail=f"Error querying document: {str(e)}"
+            )
 
     async def get_batch_embeddings(self, texts: List[str], batch_size: int = 32) -> List[Dict]:
         try:
@@ -166,6 +169,37 @@ class RAGProcessor:
             raise HTTPException(
                 status_code=500,
                 detail=f"Error generating batch embeddings: {str(e)}"
+            )
+
+    async def process_file_for_embeddings(self, file_content: bytes) -> List[Point]:
+        try:
+            # Read the content and split into lines
+            lines = [line.strip() for line in StringIO(file_content.decode('utf-8')).readlines() if line.strip()]
+
+            # Get embeddings for each line
+            embeddings = await self.get_batch_embeddings(lines)
+
+            # Create points
+            points = []
+            for text, embedding_data in zip(lines, embeddings):
+                point_id = uuid4()
+                point = Point(
+                    id=point_id,
+                    content=text,
+                    embedding=embedding_data["embedding"],
+                    metadata={
+                        "source": "file_upload",
+                        "id": str(point_id)
+                    },
+                    media=[]
+                )
+                points.append(point)
+
+            return points
+        except Exception as e:
+            raise HTTPException(
+                status_code=500,
+                detail=f"Error processing file: {str(e)}"
             )
 
 
@@ -224,10 +258,10 @@ async def get_embeddings(request: EmbeddingRequest):
         return EmbeddingResponse(
             text=request.text,
             embedding=embedding,
-            id=point_id,  # Include UUID in response
+            id=point_id,
             metadata={
                 "source": "single_request",
-                "id": str(point_id)  # Include UUID in metadata as well
+                "id": str(point_id)
             }
         )
     except Exception as e:
@@ -271,39 +305,6 @@ async def health_check():
     }
 
 
-# Add this new method to RAGProcessor class
-async def process_file_for_embeddings(self, file_content: str) -> List[Point]:
-    try:
-        # Read the content and split into lines
-        lines = [line.strip() for line in StringIO(file_content.decode('utf-8')).readlines() if line.strip()]
-
-        # Get embeddings for each line
-        embeddings = await self.get_batch_embeddings(lines)
-
-        # Create points
-        points = []
-        for text, embedding_data in zip(lines, embeddings):
-            point_id = uuid4()
-            point = Point(
-                id=point_id,
-                content=text,
-                embedding=embedding_data["embedding"],
-                metadata={
-                    "source": "file_upload",
-                    "id": str(point_id)
-                }
-            )
-            points.append(point)
-
-        return points
-    except Exception as e:
-        raise HTTPException(
-            status_code=500,
-            detail=f"Error processing file: {str(e)}"
-        )
-
-
-# Add new endpoint for file upload and vector storage
 @app.post("/process-file")
 async def process_file_to_vectors(
         file: UploadFile = File(...),
@@ -323,37 +324,40 @@ async def process_file_to_vectors(
         points = await rag_processor.process_file_for_embeddings(content)
 
         # Send points to vector database
-        vector_db_url = f"http://localhost:8000/api/v1/collections/{collection_name}/payload"
+        vector_db_url = f"http://localhost:7272/api/v1/collections/{collection_name}/payload"
+
+        # Prepare the points in the required format
+        formatted_points = [
+            {
+                "id": str(point.id),
+                "metadata": point.metadata,
+                "content": point.content,
+                "media": point.media,
+                "embedding": point.embedding
+            }
+            for point in points
+        ]
 
         async with aiohttp.ClientSession() as session:
-            async with session.post(
-                    vector_db_url,
-                    json={
-                        "points": [
-                            {
-                                "id": str(point.id),
-                                "payload": {
-                                    "content": point.content,
-                                    "embedding": point.embedding,
-                                    "metadata": point.metadata
-                                }
-                            }
-                            for point in points
-                        ]
-                    }
-            ) as response:
-                if response.status != 200:
-                    raise HTTPException(
-                        status_code=response.status,
-                        detail=f"Error from vector database: {await response.text()}"
-                    )
-
-                result = await response.json()
+            # Send each point individually
+            responses = []
+            for point in formatted_points:
+                async with session.post(
+                        vector_db_url,
+                        json=point
+                ) as response:
+                    if response.status not in [200, 201]:
+                        raise HTTPException(
+                            status_code=response.status,
+                            detail=f"Error from vector database: {await response.text()}"
+                        )
+                    result = await response.json()
+                    responses.append(result)
 
         return {
             "status": "success",
             "processed_points": len(points),
-            "vector_db_response": result
+            "vector_db_responses": responses
         }
 
     except Exception as e:
@@ -362,7 +366,7 @@ async def process_file_to_vectors(
             detail=str(e)
         )
 
+
 if __name__ == "__main__":
     import uvicorn
-
     uvicorn.run(app, host="0.0.0.0", port=8000)
