@@ -39,9 +39,8 @@ class Document(BaseModel):
 
 
 class SearchResponse(BaseModel):
-    documents: List[Document]
-    total: int
-    scores: List[float]
+
+    content: List[str]
 
 
 class Similarity:
@@ -141,10 +140,9 @@ async def similarity_search(request: SearchRequest, collection_name: str = "vect
 
         logger.info(f"Returning {len(result_documents)} documents from similarity search")
 
+      # app/routers/similarity.py
         return SearchResponse(
-            documents=result_documents,
-            total=len(result_documents),
-            scores=result_scores
+            content=list(set(doc.content for doc in result_documents))
         )
 
     except Exception as e:
