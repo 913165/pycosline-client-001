@@ -148,7 +148,7 @@ async def similarity_search(request: SearchRequest, collection_name: str = "vect
         )
 
     except Exception as e:
-        logger.error(f"Error in similarity search: {str(e)}")
+        logger.error(f"Error in similarity search embedding: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
 # Add to __init__.py:
