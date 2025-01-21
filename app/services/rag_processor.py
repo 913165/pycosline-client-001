@@ -16,8 +16,15 @@ from langchain.chains import create_retrieval_chain
 from app.config.settings import MISTRAL_API_KEY
 from app.models.request_models import ChatMessage
 from app.models.response_models import Point
+import logging
+import traceback
+
+
+
 
 class RAGProcessor:
+    logging.basicConfig(level=logging.INFO)
+    logging = logging.getLogger(__name__)
     def __init__(self):
         self.text_splitter = RecursiveCharacterTextSplitter(
             chunk_size=1000,
@@ -136,54 +143,65 @@ class RAGProcessor:
            Please provide a clear and contextual response.
     """)
 
+    # Add this to your RAGProcessor class
+
+    # Add this to your RAGProcessor class
+
     async def process_chat(
             self,
             question: str,
             chat_history: Optional[List[ChatMessage]] = None,
             similarity_threshold: float = 0.7,
-            top_k: int = 5
+            top_k: int = 5,
+            collection_name: str = "vector_store"
     ) -> Tuple[str, List[str], List[float]]:
         """
-        Process a chat message with conversation context.
+        Process chat using existing similarity search functionality.
         """
-        if not self.vector_store:
-            raise HTTPException(
-                status_code=400,
-                detail="No documents have been processed yet"
+        from app.routers.similarity import SearchRequest, similarity_search
+        try:
+            # Create search request using existing SearchRequest model
+            search_request = SearchRequest(
+                query=question,
+                topK=top_k,
+                similarityThreshold=similarity_threshold
             )
 
-        try:
+            # Use existing similarity search to get relevant documents
+            search_response = await similarity_search(
+                request=search_request,
+                collection_name=collection_name
+            )
+
             # Format chat history
             formatted_history = ""
             if chat_history:
                 formatted_history = "\n".join([
                     f"{msg.role}: {msg.content}"
-                    for msg in chat_history[-5:]  # Keep last 5 messages for context
+                    for msg in chat_history[-5:]
                 ])
 
-            # Get retriever with settings
-            retriever = self.vector_store.as_retriever()
+            # Create the message content
+            message_content = f"""
+            Previous conversation:
+            {formatted_history}
 
-            # Create document chain with chat-specific prompt
-            document_chain = create_stuff_documents_chain(
-                self.model,
-                self.chat_prompt
-            )
+            Context from documents:
+            {' '.join(search_response.content)}
 
-            # Create retrieval chain
-            retrieval_chain = create_retrieval_chain(retriever, document_chain)
+            Question: {question}
 
-            # Get response with chat context
-            response = retrieval_chain.invoke({
-                "input": question,
-                "chat_history": formatted_history
-            })
+            Please provide a helpful response based on the context provided.
+            """
 
-            # Return answer with mock sources/scores for now
-            # In production, you'd extract these from the retrieval results
-            return response["answer"], ["Document"], [1.0]
+            # Use LangChain's ChatMistralAI interface
+            response = await self.model.ainvoke(message_content)
+
+            # Return answer with documents as sources
+            return response.content, search_response.content, [1.0] * len(search_response.content)
 
         except Exception as e:
+            logging.error(f"Error processing chat: {str(e)}")
             raise HTTPException(
                 status_code=500,
                 detail=f"Error in chat processing: {str(e)}"
