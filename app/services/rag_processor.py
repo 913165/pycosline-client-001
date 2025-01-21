@@ -1,7 +1,7 @@
 # app/services/rag_processor.py
 from uuid import uuid4
 from fastapi import HTTPException
-from typing import List, Dict
+from typing import List, Dict, Optional, Tuple
 from io import StringIO
 
 from langchain_community.document_loaders import TextLoader
@@ -14,6 +14,7 @@ from langchain_core.prompts import ChatPromptTemplate
 from langchain.chains import create_retrieval_chain
 
 from app.config.settings import MISTRAL_API_KEY
+from app.models.request_models import ChatMessage
 from app.models.response_models import Point
 
 class RAGProcessor:
@@ -121,5 +122,71 @@ class RAGProcessor:
                 detail=f"Error processing file: {str(e)}"
             )
 
+    chat_prompt = ChatPromptTemplate.from_template("""
+           Answer the following question based on the provided context and chat history.
+
+           Previous Conversation:
+           {chat_history}
+
+           Context from documents:
+           {context}
+
+           Current Question: {input}
+
+           Please provide a clear and contextual response.
+    """)
+
+    async def process_chat(
+            self,
+            question: str,
+            chat_history: Optional[List[ChatMessage]] = None,
+            similarity_threshold: float = 0.7,
+            top_k: int = 5
+    ) -> Tuple[str, List[str], List[float]]:
+        """
+        Process a chat message with conversation context.
+        """
+        if not self.vector_store:
+            raise HTTPException(
+                status_code=400,
+                detail="No documents have been processed yet"
+            )
+
+        try:
+            # Format chat history
+            formatted_history = ""
+            if chat_history:
+                formatted_history = "\n".join([
+                    f"{msg.role}: {msg.content}"
+                    for msg in chat_history[-5:]  # Keep last 5 messages for context
+                ])
+
+            # Get retriever with settings
+            retriever = self.vector_store.as_retriever()
+
+            # Create document chain with chat-specific prompt
+            document_chain = create_stuff_documents_chain(
+                self.model,
+                self.chat_prompt
+            )
+
+            # Create retrieval chain
+            retrieval_chain = create_retrieval_chain(retriever, document_chain)
+
+            # Get response with chat context
+            response = retrieval_chain.invoke({
+                "input": question,
+                "chat_history": formatted_history
+            })
+
+            # Return answer with mock sources/scores for now
+            # In production, you'd extract these from the retrieval results
+            return response["answer"], ["Document"], [1.0]
+
+        except Exception as e:
+            raise HTTPException(
+                status_code=500,
+                detail=f"Error in chat processing: {str(e)}"
+            )
 # Initialize a single instance
 rag_processor = RAGProcessor()

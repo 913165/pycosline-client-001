@@ -3,7 +3,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.config.settings import ALLOWED_ORIGINS
-from app.routers import document, embeddings, health, similarity
+from app.routers import document, embeddings, health, similarity,chat_router
 
 app = FastAPI()
 
@@ -14,6 +14,7 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+
 )
 
 # Include routers
@@ -23,6 +24,8 @@ app.include_router(health.router, tags=["Health"])
 
 #  router for similarity
 app.include_router(similarity.router, tags=["Similarity"])
+
+app.include_router(chat_router, tags=["chat"])
 
 if __name__ == "__main__":
     import uvicorn

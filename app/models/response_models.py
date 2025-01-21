@@ -24,3 +24,9 @@ class Point(BaseModel):
 
     class Config:
         from_attributes = True
+
+class ChatResponse(BaseModel):
+    answer: str
+    sources: Optional[List[str]] = None
+    similarity_scores: Optional[List[float]] = None
+    processing_time: float

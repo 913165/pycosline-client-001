@@ -17,3 +17,15 @@ class EmbeddingRequest(BaseModel):
 class BatchEmbeddingRequest(BaseModel):
     texts: List[str]
     batch_size: Optional[int] = 32
+
+
+class ChatMessage(BaseModel):
+    role: str
+    content: str
+
+
+class ChatRequest(BaseModel):
+    question: str
+    chat_history: Optional[List[ChatMessage]] = []
+    similarity_threshold: float = 0.7
+    top_k: int = 5
